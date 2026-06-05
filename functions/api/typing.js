@@ -1,22 +1,32 @@
-export async function onRequestPost(context) {
-      const { request, env } = context;
-        const body = await request.json();
-          const typingRaw = await env.CHAT_STORE.get("global_typing_stream");
-            let typers = typingRaw ? JSON.parse(typingRaw) : {};
+export async function onRequestPost({ request, env }) {
+  const body = await request.json();
 
-              if (body.isTyping) {
-                  typers[body.user] = Date.now();
-                    } else {
-                        delete typers[body.user];
-                          }
+  const typingRaw = await env.CHAT_STORE.get(
+    "global_typing_stream"
+  );
 
-                            const now = Date.now();
-                              Object.keys(typers).forEach(u => {
-                                  if (now - typers[u] > 3000) delete typers[u];
-                                    });
+  let typers = typingRaw
+    ? JSON.parse(typingRaw)
+    : {};
 
-                                      await env.CHAT_STORE.put("global_typing_stream", JSON.stringify(typers));
-                                        return new Response("OK");
-                                        }
-                                        
+  if (body.isTyping) {
+    typers[body.user] = Date.now();
+  } else {
+    delete typers[body.user];
+  }
+
+  const now = Date.now();
+
+  Object.keys(typers).forEach(user => {
+    if (now - typers[user] > 3000) {
+      delete typers[user];
+    }
+  });
+
+  await env.CHAT_STORE.put(
+    "global_typing_stream",
+    JSON.stringify(typers)
+  );
+
+  return new Response("OK");
 }
