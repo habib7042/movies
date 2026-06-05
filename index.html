@@ -183,252 +183,217 @@
   </div>
 
   <script>
-    // --- STATE MANAGEMENT ---
-    const CORRECT_PIN = "7042"; // Adjust this pin to match your desired credentials
-    let enteredPin = "";
     let socket = null;
-    let replyId = null;
-    let currentImageBase64 = null;
-    
-    let activeUser = "User_" + Math.floor(Math.random() * 1000); 
-    let typingTimeout = null;
+let replyId = null;
+let replyRawText = null;
+let currentImageBase64 = null;
+let typingTimeout = null;
+let isAuthed = false;
+let enteredPin = "";
 
-    // --- LOCKSCREEN PIN LOGIC ---
-    function pressPin(num) {
-      if (enteredPin.length < 4) {
-        enteredPin += num;
-        document.getElementById("dots").textContent = "*".repeat(enteredPin.length);
-      }
-      if (enteredPin.length === 4) {
-        setTimeout(() => {
-          if (enteredPin === CORRECT_PIN) {
-            document.getElementById("lockScreen").style.display = "none";
-            document.getElementById("chatApp").style.display = "flex";
-            
-            // Try triggering dynamic fullscreen layout immediately upon entering chat
-            requestAutofullscreen();
-            initWebSocket(); 
-          } else {
-            alert("Incorrect PIN!");
-            clearPin();
-          }
-        }, 250);
-      }
+let activeUser = localStorage.getItem("chat_user")
+  || "User_" + Math.floor(Math.random() * 9000 + 1000);
+localStorage.setItem("chat_user", activeUser);
+
+function pressPin(num) {
+  if (enteredPin.length < 4) {
+    enteredPin += num;
+    document.getElementById("dots").textContent = "*".repeat(enteredPin.length);
+  }
+  if (enteredPin.length === 4) setTimeout(submitPin, 250);
+}
+
+function clearPin() {
+  enteredPin = "";
+  document.getElementById("dots").textContent = "";
+}
+
+function submitPin() {
+  initWebSocket(enteredPin);
+}
+
+function initWebSocket(pin) {
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  socket = new WebSocket(`${protocol}//${location.host}/api/chat`);
+
+  socket.addEventListener("open", () => {
+    socket.send(JSON.stringify({ type: "auth", pin, user: activeUser }));
+  });
+
+  socket.addEventListener("message", (e) => {
+    try { handleIncoming(JSON.parse(e.data)); } catch {}
+  });
+
+  socket.addEventListener("close", () => {
+    if (isAuthed) setTimeout(() => initWebSocket(null), 3000);
+  });
+}
+
+function handleIncoming(data) {
+  if (data.type === "auth_ok") {
+    activeUser = data.user;
+    isAuthed = true;
+    document.getElementById("lockScreen").style.display = "none";
+    document.getElementById("chatApp").style.display = "flex";
+  } else if (data.type === "auth_fail") {
+    alert("Incorrect PIN!");
+    clearPin();
+    socket.close();
+  } else if (data.type === "history") {
+    data.messages.forEach(renderMessage);
+  } else if (data.type === "chat_msg") {
+    renderMessage(data);
+  } else if (data.type === "typing") {
+    if (data.user !== activeUser) {
+      document.getElementById("typingDisplay").textContent =
+        data.isTyping ? `${data.user} is typing...` : "";
     }
+  } else if (data.type === "error") {
+    alert(data.msg);
+  }
+}
 
-    function clearPin() {
-      enteredPin = "";
-      document.getElementById("dots").textContent = "";
-    }
+function renderMessage(msg) {
+  const chat = document.getElementById("chat");
+  const isMe = msg.user === activeUser;
 
-    // --- FULLSCREEN CONTROLS ---
-    function requestAutofullscreen() {
-      // Browsers usually require direct user clicks, but running it directly here works right off the PIN pad tap
-      const docEl = document.documentElement;
-      if (docEl.requestFullscreen) docEl.requestFullscreen().catch(() => {});
-    }
+  const row = document.createElement("div");
+  row.className = `msg-row ${isMe ? "my-row" : "peer-row"}`;
 
-    function toggleFullscreen() {
-      const btn = document.getElementById("fsBtn");
-      if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen()
-          .then(() => { btn.textContent = "Exit Full"; })
-          .catch(err => console.log(err));
-      } else {
-        document.exitFullscreen();
-        btn.textContent = "🖥️ Fullscreen";
-      }
-    }
+  const avatar = document.createElement("div");
+  avatar.className = "avatar";
+  avatar.textContent = msg.user.substring(0, 2).toUpperCase();
 
-    // Update screen button state if full-screen mode changes manually via native shortcuts
-    document.addEventListener('fullscreenchange', () => {
-      const btn = document.getElementById("fsBtn");
-      if (document.fullscreenElement) {
-        btn.textContent = "Exit Full";
-      } else {
-        btn.textContent = "🖥️ Fullscreen";
-      }
-    });
+  const bubble = document.createElement("div");
+  bubble.className = "msg-bubble";
 
-    // --- WEBSOCKET ENGINE ---
-    function initWebSocket() {
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/api/chat`;
+  const uname = document.createElement("span");
+  uname.className = "username";
+  uname.textContent = msg.user;
+  bubble.appendChild(uname);
 
-      socket = new WebSocket(wsUrl);
+  if (msg.replyTo && msg.replyToText) {
+    const rp = document.createElement("div");
+    rp.className = "reply-preview-box";
+    rp.textContent = "↩ " + msg.replyToText;
+    bubble.appendChild(rp);
+  }
 
-      socket.addEventListener("open", () => {
-        console.log("⚡ Connected instantly via real-time WebSocket.");
-      });
+  if (msg.text) {
+    const txt = document.createElement("div");
+    txt.textContent = msg.text;
+    bubble.appendChild(txt);
+  }
 
-      socket.addEventListener("message", (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          handleIncomingData(data);
-        } catch (err) {
-          console.error("Failed parsing message packet:", err);
-        }
-      });
+  if (msg.image) {
+    const wrap = document.createElement("div");
+    wrap.className = "chat-img-container";
+    const img = document.createElement("img");
+    img.src = msg.image;
+    img.className = "chat-img";
+    img.alt = "shared image";
+    const dl = document.createElement("a");
+    dl.href = msg.image;
+    dl.download = "image.png";
+    dl.className = "dl-btn";
+    dl.textContent = "💾 Save";
+    wrap.appendChild(img);
+    wrap.appendChild(dl);
+    bubble.appendChild(wrap);
+  }
 
-      socket.addEventListener("close", () => {
-        console.warn("⚠️ Connection closed. Attempting reconnect in 3s...");
-        setTimeout(initWebSocket, 3000); 
-      });
-    }
+  const actions = document.createElement("div");
+  actions.className = "actions-tray";
+  actions.textContent = "⤺ Reply";
+  actions.addEventListener("click", () => triggerReply(msg.id, msg.text || "Image"));
+  bubble.appendChild(actions);
 
-    function handleIncomingData(data) {
-      if (data.type === "chat_msg") {
-        renderMessage(data);
-      } else if (data.type === "typing") {
-        const display = document.getElementById("typingDisplay");
-        if (data.user !== activeUser) {
-          display.textContent = data.isTyping ? `${data.user} is typing...` : "";
-        }
-      }
-    }
+  row.appendChild(avatar);
+  row.appendChild(bubble);
+  chat.appendChild(row);
+  setTimeout(() => { chat.scrollTop = chat.scrollHeight; }, 50);
+}
 
-    // --- UI RENDERING ENGINE ---
-    function renderMessage(msg) {
-      const chatContainer = document.getElementById("chat");
-      const isMe = msg.user === activeUser;
+function send() {
+  const input = document.getElementById("msgInput");
+  const text = input.value.trim();
+  if (!text && !currentImageBase64) return;
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
 
-      const row = document.createElement("div");
-      row.className = `msg-row ${isMe ? "my-row" : "peer-row"}`;
-      row.id = `msg-${msg.id}`;
+  socket.send(JSON.stringify({
+    type: "chat_msg",
+    text: text || null,
+    image: currentImageBase64 || null,
+    replyTo: replyId,
+    replyToText: replyRawText,
+  }));
 
-      let innerHTML = `
-        <div class="avatar">${msg.user.substring(0, 2).toUpperCase()}</div>
-        <div class="msg-bubble">
-          <span class="username">${msg.user}</span>
-      `;
+  input.value = "";
+  currentImageBase64 = null;
+  cancelReply();
+  notifyTyping(false);
+}
 
-      if (msg.replyTo) {
-        innerHTML += `<div class="reply-preview-box"><i>Replying to:</i> ${escapeHTML(msg.replyToText)}</div>`;
-      }
+function uploadImage(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  if (file.size > 512 * 1024) { alert("Max image size is 512 KB."); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => { currentImageBase64 = e.target.result; send(); };
+  reader.readAsDataURL(file);
+}
 
-      if (msg.text) {
-        innerHTML += `<div>${escapeHTML(msg.text)}</div>`;
-      }
+function notifyTyping(isTyping) {
+  if (!socket || socket.readyState !== WebSocket.OPEN || !isAuthed) return;
+  socket.send(JSON.stringify({ type: "typing", isTyping }));
+  if (isTyping) {
+    clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => notifyTyping(false), 2000);
+  }
+}
 
-      if (msg.image) {
-        innerHTML += `
-          <div class="chat-img-container">
-            <img src="${msg.image}" class="chat-img" alt="shared content" />
-            <a href="${msg.image}" download="shared_image.png" class="dl-btn">💾 Save</a>
-          </div>
-        `;
-      }
+function triggerReply(id, text) {
+  replyId = id;
+  replyRawText = text;
+  document.getElementById("replyBarText").textContent = `Replying to: "${text.substring(0, 30)}..."`;
+  document.getElementById("replyBar").style.display = "flex";
+}
 
-      innerHTML += `
-          <div class="actions-tray" onclick="triggerReply('${msg.id}', '${escapeHTML(msg.text || "Image")}')">
-            ⤺ Reply
-          </div>
-        </div>
-      `;
+function cancelReply() {
+  replyId = null;
+  replyRawText = null;
+  document.getElementById("replyBar").style.display = "none";
+}
 
-      row.innerHTML = innerHTML;
-      chatContainer.appendChild(row);
-      
-      // Keep mobile users glued smoothly to bottom messages
-      setTimeout(() => {
-        chatContainer.scrollTop = chatContainer.scrollHeight;
-      }, 50);
-    }
+function toggleEmojiTray() {
+  const tray = document.getElementById("emojiTray");
+  tray.style.display = tray.style.display === "grid" ? "none" : "grid";
+}
 
-    // --- OUTBOUND SENDER ---
-    function send() {
-      const input = document.getElementById("msgInput");
-      const text = input.value.trim();
-      
-      if (!text && !currentImageBase64) return;
+function pickEmoji(emoji) {
+  document.getElementById("msgInput").value += emoji;
+  toggleEmojiTray();
+  document.getElementById("msgInput").focus();
+}
 
-      const payload = {
-        type: "chat_msg",
-        id: "msg_" + Date.now() + "_" + Math.floor(Math.random() * 1000),
-        user: activeUser,
-        text: text,
-        image: currentImageBase64 || null,
-        replyTo: replyId,
-        replyToText: replyId ? document.getElementById("replyBarText").dataset.rawText : null
-      };
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {});
+    document.getElementById("fsBtn").textContent = "Exit Full";
+  } else {
+    document.exitFullscreen();
+    document.getElementById("fsBtn").textContent = "🖥️ Fullscreen";
+  }
+}
 
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify(payload));
-        
-        input.value = "";
-        cancelReply();
-        currentImageBase64 = null;
-        notifyTyping(false);
-      } else {
-        alert("Socket connection is currently down. Reconnecting...");
-      }
-    }
+document.addEventListener("fullscreenchange", () => {
+  document.getElementById("fsBtn").textContent =
+    document.fullscreenElement ? "Exit Full" : "🖥️ Fullscreen";
+});
 
-    // --- MEDIA UPLOADER ---
-    function uploadImage(event) {
-      const file = event.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = function(e) {
-        currentImageBase64 = e.target.result;
-        send(); 
-      };
-      reader.readAsDataURL(file);
-    }
-
-    // --- TYPING INDICATORS ---
-    function notifyTyping(isTyping) {
-      if (!socket || socket.readyState !== WebSocket.OPEN) return;
-      
-      socket.send(JSON.stringify({
-        type: "typing",
-        user: activeUser,
-        isTyping: isTyping
-      }));
-
-      if (isTyping) {
-        clearTimeout(typingTimeout);
-        typingTimeout = setTimeout(() => notifyTyping(false), 2000);
-      }
-    }
-
-    // --- AUXILIARY HELPERS ---
-    function triggerReply(id, text) {
-      replyId = id;
-      const bar = document.getElementById("replyBar");
-      const txt = document.getElementById("replyBarText");
-      txt.textContent = `Replying to: "${text.substring(0, 18)}..."`;
-      txt.dataset.rawText = text; 
-      bar.style.display = "flex";
-    }
-
-    function cancelReply() {
-      replyId = null;
-      document.getElementById("replyBar").style.display = "none";
-    }
-
-    function toggleEmojiTray() {
-      const tray = document.getElementById("emojiTray");
-      tray.style.display = tray.style.display === "grid" ? "none" : "grid";
-    }
-
-    function pickEmoji(emoji) {
-      const input = document.getElementById("msgInput");
-      input.value += emoji;
-      toggleEmojiTray();
-      input.focus();
-    }
-
-    function escapeHTML(str) {
-      if (!str) return '';
-      return str.replace(/[&<>'"]/g, 
-        tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
-      );
-    }
-
-    document.getElementById("msgInput").addEventListener("keydown", function(e) {
-      if (e.key === "Enter") send();
-    });
+document.getElementById("msgInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") send();
+});
   </script>
 </body>
 </html>
