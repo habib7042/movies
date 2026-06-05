@@ -16,16 +16,37 @@ export async function onRequestPost({ request, env }) {
     });
   } else if (body.type === "react") {
     const msg = messages.find(m => m.id === body.msgId);
+
     if (msg) {
-      if (!msg.reactions[body.emoji]) msg.reactions[body.emoji] = [];
+      if (!msg.reactions[body.emoji]) {
+        msg.reactions[body.emoji] = [];
+      }
+
       const idx = msg.reactions[body.emoji].indexOf(body.user);
-      if (idx > -1) msg.reactions[body.emoji].splice(idx, 1);
-      else msg.reactions[body.emoji].push(body.user);
+
+      if (idx > -1) {
+        msg.reactions[body.emoji].splice(idx, 1);
+      } else {
+        msg.reactions[body.emoji].push(body.user);
+      }
     }
   }
 
-  if (messages.length > 30) messages.shift();
-  await env.CHAT_STORE.put("global_chat_stream", JSON.stringify(messages));
-  return new Response(JSON.stringify({ success: true }), {
-    headers: { "Content-Type": "application/json" }
-  });
+  if (messages.length > 30) {
+    messages.shift();
+  }
+
+  await env.CHAT_STORE.put(
+    "global_chat_stream",
+    JSON.stringify(messages)
+  );
+
+  return new Response(
+    JSON.stringify({ success: true }),
+    {
+      headers: {
+        "Content-Type": "application/json"
+      }
+    }
+  );
+}
