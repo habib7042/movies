@@ -1,6 +1,4 @@
-export async function onRequestGet(context) {
-  const { env } = context;
-
+export async function onRequestGet({ env }) {
   const messagesRaw = await env.CHAT_STORE.get("global_chat_stream");
   const typingRaw = await env.CHAT_STORE.get("global_typing_stream");
 
@@ -15,6 +13,4 @@ export async function onRequestGet(context) {
       }
     }
   );
-}
-
 }
